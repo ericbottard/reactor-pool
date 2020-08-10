@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import me.champeau.gradle.japicmp.JapicmpTask
+
 buildscript {
   repositories {
     maven { url "https://repo.spring.io/plugins-release" }
@@ -26,6 +28,8 @@ plugins {
   id "com.github.hierynomus.license" version "0.15.0"
   id "com.jfrog.artifactory" version "4.15.2" apply false
   id 'biz.aQute.bnd.builder' version '5.0.1' apply false
+  id "me.champeau.gradle.japicmp" version "0.2.6"
+  id "de.undercouch.download" version "3.4.3"
 }
 
 description = 'Reactive Object Pool'
@@ -217,5 +221,52 @@ configurations.all {
     mapping {
       java = 'SLASHSTAR_STYLE'
     }
+  }
+}
+
+
+task downloadBaseline(type: Download) {
+  onlyIfNewer true
+  compress true
+
+  src "${repositories.jcenter().url}io/projectreactor/addons/reactor-pool/$compatibleVersion/reactor-pool-${compatibleVersion}.jar"
+  dest "${buildDir}/baselineLibs/reactor-pool-${compatibleVersion}.jar"
+}
+
+task japicmp(type: JapicmpTask) {
+  if (project.gradle.startParameter.isOffline()) {
+    println "Offline: skipping downloading of baseline and JAPICMP"
+    enabled = false
+  }
+  else if ("$compatibleVersion" == "SKIP") {
+    println "SKIP: Instructed to skip the baseline comparison"
+    enabled = false
+  }
+  else {
+    println "Will download and perform baseline comparison with ${compatibleVersion}"
+    dependsOn(downloadBaseline)
+  }
+
+  oldClasspath = tasks.downloadBaseline.outputs.files
+  newClasspath = tasks.jar.outputs.files
+  onlyBinaryIncompatibleModified = true
+  failOnModification = true
+  failOnSourceIncompatibility = true
+  txtOutputFile = file("${project.buildDir}/reports/japi.txt")
+  ignoreMissingClasses = true
+  includeSynthetic = true
+
+  //TODO after a release, bump the gradle.properties baseline
+  //TODO after a release, remove the reactor-pool exclusions below if any
+  classExcludes = [
+  ]
+  methodExcludes = [
+  ]
+}
+check.dependsOn japicmp
+
+gradle.taskGraph.afterTask { task, state ->
+  if (task instanceof JapicmpTask && state.failure) {
+    print file("${project.buildDir}/reports/japi.txt").getText()
   }
 }
